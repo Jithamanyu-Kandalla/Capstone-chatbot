@@ -1,4 +1,4 @@
-pip install pdfplumber
+pip instal pdfplumber
 
 import streamlit as st
 import pdfplumber
