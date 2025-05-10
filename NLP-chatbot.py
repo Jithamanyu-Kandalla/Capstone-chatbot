@@ -1,3 +1,5 @@
+pip! install pdfplumber
+
 import streamlit as st
 import pdfplumber
 import docx
