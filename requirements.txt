@@ -1,0 +1,9 @@
+torch
+transformers
+sentence-transformers
+streamlit
+chromadb
+faiss-cpu
+langchain
+nltk
+peft
