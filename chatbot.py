@@ -8,8 +8,8 @@ import os
 from huggingface_hub import login
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from langchain_community.vectorstores import FAISS
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.text_splitter import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
 
 # Authenticate Hugging Face API securely
