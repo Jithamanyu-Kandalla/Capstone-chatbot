@@ -3,7 +3,6 @@ transformers
 streamlit
 chromadb
 faiss-cpu
-langchain
 langchain-community
 nltk
 spacy
@@ -13,3 +12,4 @@ python-docx
 pandas
 sentence-transformers
 huggingface_hub
+asyncio

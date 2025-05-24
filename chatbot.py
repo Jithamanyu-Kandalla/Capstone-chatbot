@@ -5,6 +5,7 @@ import pandas as pd
 import docx
 import spacy
 import os
+import asyncio
 from huggingface_hub import login
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from langchain_community.vectorstores import FAISS
@@ -16,6 +17,13 @@ from sentence_transformers import SentenceTransformer
 hf_token = os.getenv("HUGGINGFACE_TOKEN")  # Load from environment secrets
 login(token=hf_token)
 
+# Ensure proper asyncio event loop handling
+try:
+    loop = asyncio.get_running_loop()
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
 # Load NLP Model (spaCy for Named Entity Recognition)
 nlp = spacy.load("en_core_web_sm")
 
@@ -23,7 +31,7 @@ nlp = spacy.load("en_core_web_sm")
 semantic_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 # Load LLM Model
-LLM_MODEL = "meta-llama/Llama-2-7b-chat-hf"
+LLM_MODEL = "mistral-7B"
 tokenizer = AutoTokenizer.from_pretrained(LLM_MODEL)
 model = AutoModelForCausalLM.from_pretrained(LLM_MODEL)
 
