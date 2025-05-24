@@ -12,4 +12,3 @@ python-docx
 pandas
 sentence-transformers
 huggingface_hub
-asyncio
