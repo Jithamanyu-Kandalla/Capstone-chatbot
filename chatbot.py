@@ -1,81 +1,125 @@
-#pip install -r requirements.txt
-
-# Install required packages
-import torch
 import streamlit as st
+import torch
+import pdfplumber
+import pandas as pd
+import docx
+import spacy
+import os
+from huggingface_hub import login
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from langchain.vectorstores import FAISS
 from langchain.embeddings import HuggingFaceEmbeddings
-from nltk.translate.bleu_score import sentence_bleu
-from langchain.memory import ConversationBufferMemory
-from peft import LoraConfig, get_peft_model
-from transformers import GPT2LMHeadModel, GPT2Tokenizer
-from transformers import CLIPProcessor, CLIPModel
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from sentence_transformers import SentenceTransformer
 
-# Initialize Models
+# Authenticate Hugging Face API securely
+hf_token = os.getenv("HUGGINGFACE_TOKEN")  # Load from environment secrets
+login(token=hf_token)
+
+# Load NLP Model (spaCy for Named Entity Recognition)
+nlp = spacy.load("en_core_web_sm")
+
+# Load Semantic Embedding Model for Contextual Retrieval
+semantic_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+
+# Load LLM Model
 LLM_MODEL = "mistral-7B"
 tokenizer = AutoTokenizer.from_pretrained(LLM_MODEL)
-base_model = AutoModelForCausalLM.from_pretrained(LLM_MODEL)
+model = AutoModelForCausalLM.from_pretrained(LLM_MODEL)
 
-# Fine-Tuning Configuration (LoRA)
-config = LoraConfig(r=8, lora_alpha=32, lora_dropout=0.05, task_type="CAUSAL_LM")
-model = get_peft_model(base_model, config)
-
-# Initialize Retrieval-Augmented Generation (RAG)
+# Initialize FAISS for RAG
 embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-db = FAISS.load_local("document_store", embeddings=embedding_model)
+vector_db = FAISS.from_texts([], embedding_model)
 
-# Initialize Memory for Multi-Turn Dialogues
-memory = ConversationBufferMemory()
+# Extract text from multiple files
+def extract_text_from_files(files):
+    """Extracts and preprocesses text from multiple document types."""
+    all_text = ""
 
-# Multi-Modal Setup (Text + Image Retrieval)
-clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+    for file in files:
+        if file.type == "application/pdf":
+            with pdfplumber.open(file) as pdf:
+                all_text += "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
+        
+        elif file.type in ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"]:
+            df = pd.read_excel(file)
+            all_text += df.to_string()
 
-# Initialize Streamlit UI
-st.title("Hybrid Chatbot (LLM + RAG + Multi-Turn Memory)")
+        elif file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            doc = docx.Document(file)
+            all_text += "\n".join([para.text for para in doc.paragraphs])
 
-# User Input
-user_query = st.text_input("Enter your query:")
+        elif file.type == "text/plain":
+            all_text += file.getvalue().decode("utf-8")
+
+    return preprocess_text(all_text)
+
+# Enhance text preprocessing using NLP techniques
+def preprocess_text(text):
+    """Enhances text preprocessing using NLP techniques."""
+    doc = nlp(text)
+    processed_text = " ".join([token.text for token in doc if not token.is_stop])  # Remove stopwords
+    return processed_text
+
+# Split extracted text into smaller chunks for optimized retrieval
+def chunk_text(text):
+    """Splits large text into manageable chunks."""
+    splitter = RecursiveCharacterTextSplitter(chunk_size=512, chunk_overlap=50)
+    return splitter.split_text(text)
+
+# Store extracted file text into FAISS vector database
+def store_chunks_in_vector_db(texts):
+    """Stores document chunks in FAISS."""
+    global vector_db
+    chunks = [chunk_text(txt) for txt in texts]
+    flat_chunks = [item for sublist in chunks for item in sublist]  # Flatten list
+    vector_db.add_texts(flat_chunks)
+
+# Generate semantic embeddings for better retrieval
+def embed_text(text):
+    """Generate semantic embeddings for better retrieval."""
+    return semantic_model.encode(text)
+
+# Expand queries semantically before retrieval
+def expand_query(query):
+    """Use NLP to find related terms for better retrieval."""
+    doc = nlp(query)
+    synonyms = [token.text for token in doc if not token.is_stop]
+    expanded_query = " ".join(synonyms)  # Remove unnecessary words for relevance
+    return expanded_query
+
+# Retrieve relevant document chunks using enhanced filtering
+def retrieve_relevant_chunks(query):
+    """Retrieves document chunks using semantic embeddings."""
+    expanded_query = expand_query(query)  # Enhance query understanding
+    query_embedding = embed_text(expanded_query)  # Convert query to embeddings
+
+    retrieved_docs = vector_db.similarity_search_by_vector(query_embedding, k=5)
+    return "\n".join([doc.page_content for doc in retrieved_docs])
+
+# Streamlit UI
+st.title("Hybrid Chatbot (NLP + LLM + RAG) with Multi-Document Retrieval & Semantic Filtering")
+
+# File Upload Section
+uploaded_files = st.file_uploader("Upload Files (PDF, Excel, Word, TXT)", accept_multiple_files=True)
+
+# User Query Input
+user_query = st.text_input("Ask a question:")
+
 if user_query:
-    # Retrieve Relevant Docs for RAG
-    retrieved_docs = db.similarity_search(user_query, k=3)
-    context = "\n".join([doc.page_content for doc in retrieved_docs])
+    # Process Files if Uploaded
+    extracted_text = extract_text_from_files(uploaded_files) if uploaded_files else ""
+    store_chunks_in_vector_db([extracted_text])  # Store chunked data
     
-    # Prepare Multi-Turn Context
-    past_conversations = memory.load_memory_variables({})
-    input_text = f"Context:\n{context}\nConversation:\n{past_conversations}\nQuery: {user_query}"
+    # Retrieve relevant data & generate response
+    context = retrieve_relevant_chunks(user_query)
+    input_text = f"Context:\n{context}\nQuery: {user_query}"
 
-    # Generate Response
+    # Generate response using LLM
     inputs = tokenizer(input_text, return_tensors="pt")
     output = model.generate(**inputs, max_length=250)
-    bot_response = tokenizer.decode(output[0], skip_special_tokens=True)
+    response = tokenizer.decode(output[0], skip_special_tokens=True)
 
-    # Store Conversation History
-    memory.save_context({"input": user_query}, {"output": bot_response})
-
-    # Display Response
+    # Display Chatbot Response
     st.write("🔹 Chatbot Response:")
-    st.write(bot_response)
-
-    # Evaluate BLEU Score
-    reference = [[word for word in context.split()]]
-    candidate = [word for word in bot_response.split()]
-    bleu_score = sentence_bleu(reference, candidate)
-    st.write(f"🔹 BLEU Score: {bleu_score}")
-
-    # Evaluate Perplexity
-    gpt2_model = GPT2LMHeadModel.from_pretrained("gpt2")
-    gpt2_tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
-    input_ids = gpt2_tokenizer.encode(user_query, return_tensors="pt")
-    loss = gpt2_model(input_ids, labels=input_ids).loss
-    perplexity = torch.exp(loss).item()
-    st.write(f"🔹 Perplexity: {perplexity}")
-
-    # Multi-Modal Retrieval (Example: Text + Image)
-    multimodal_inputs = clip_processor(text=[user_query], images=["path/to/sample.jpg"], return_tensors="pt")
-    multimodal_outputs = clip_model(**multimodal_inputs)
-    st.write("🔹 Multi-Modal Feature Extraction Complete!")
-
-# Run using: streamlit run chatbot.py
-# streamlit run chatbot.py
+    st.write(response)

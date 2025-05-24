@@ -1,9 +1,14 @@
 torch
 transformers
-sentence-transformers
 streamlit
 chromadb
 faiss-cpu
 langchain
 nltk
-peft
+spacy
+pdfplumber
+openpyxl
+python-docx
+pandas
+sentence-transformers
+huggingface_hub
