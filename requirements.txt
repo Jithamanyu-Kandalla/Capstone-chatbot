@@ -4,6 +4,7 @@ streamlit
 chromadb
 faiss-cpu
 langchain
+langchain-community
 nltk
 spacy
 pdfplumber

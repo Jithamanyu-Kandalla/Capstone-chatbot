@@ -7,7 +7,7 @@ import spacy
 import os
 from huggingface_hub import login
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from langchain.vectorstores import FAISS
+from langchain_community.vectorstores import FAISS
 from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
