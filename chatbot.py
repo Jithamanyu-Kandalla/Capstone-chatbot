@@ -23,7 +23,7 @@ nlp = spacy.load("en_core_web_sm")
 semantic_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 # Load LLM Model
-LLM_MODEL = "mistral-7B"
+LLM_MODEL = "meta-llama/Llama-2-7b-chat-hf"
 tokenizer = AutoTokenizer.from_pretrained(LLM_MODEL)
 model = AutoModelForCausalLM.from_pretrained(LLM_MODEL)
 
