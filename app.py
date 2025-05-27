@@ -1,147 +1,31 @@
-#!/usr/bin/env python3
-import os
-import sys
-import tempfile
-import shutil
-
-# CRITICAL: Fix all Streamlit permission issues before any imports
-def fix_streamlit_permissions():
-    """Comprehensive fix for Streamlit permission issues in containers"""
-    
-    # Create a writable temp directory
-    temp_dir = tempfile.mkdtemp()
-    
-    # Set ALL possible Streamlit environment variables
-    streamlit_env_vars = {
-        'STREAMLIT_CONFIG_DIR': temp_dir,
-        'STREAMLIT_STATIC_DIR': temp_dir,
-        'STREAMLIT_BROWSER_GATHER_USAGE_STATS': 'false',
-        'STREAMLIT_SERVER_HEADLESS': 'true',
-        'STREAMLIT_SERVER_PORT': '7860',
-        'STREAMLIT_SERVER_ADDRESS': '0.0.0.0',
-        'STREAMLIT_GLOBAL_SUPPRESS_WARNING': 'true',
-        'STREAMLIT_GLOBAL_SHOW_WARNING_ON_DIRECT_EXECUTION': 'false',
-        'STREAMLIT_LOGGER_LEVEL': 'ERROR',
-        'STREAMLIT_CLIENT_TOOLBAR_MODE': 'minimal',
-        'STREAMLIT_SERVER_ENABLE_CORS': 'false',
-        'STREAMLIT_GLOBAL_DISABLE_WATCHDOG_WARNING': 'true'
-    }
-    
-    for key, value in streamlit_env_vars.items():
-        os.environ[key] = value
-    
-    # Create the .streamlit directory structure
-    streamlit_config_dir = os.path.join(temp_dir, '.streamlit')
-    os.makedirs(streamlit_config_dir, exist_ok=True)
-    
-    # Create comprehensive config.toml
-    config_content = """
-[server]
-headless = true
-port = 7860
-address = "0.0.0.0"
-baseUrlPath = ""
-enableCORS = false
-enableXsrfProtection = false
-maxUploadSize = 200
-maxMessageSize = 200
-enableWebsocketCompression = false
-
-[browser]
-gatherUsageStats = false
-serverAddress = "0.0.0.0"
-serverPort = 7860
-
-[global]
-suppressDeprecationWarnings = true
-showWarningOnDirectExecution = false
-disableWatchdogWarning = true
-
-[client]
-toolbarMode = "minimal"
-showErrorDetails = false
-
-[logger]
-level = "ERROR"
-enableRich = false
-
-[theme]
-base = "light"
-"""
-    
-    # Write config file
-    try:
-        with open(os.path.join(streamlit_config_dir, 'config.toml'), 'w') as f:
-            f.write(config_content)
-    except Exception as e:
-        print(f"Warning: Could not write config file: {e}")
-    
-    # Create credentials file to prevent machine ID generation
-    try:
-        credentials_content = """
-[general]
-email = ""
-"""
-        with open(os.path.join(streamlit_config_dir, 'credentials.toml'), 'w') as f:
-            f.write(credentials_content)
-    except Exception as e:
-        print(f"Warning: Could not write credentials file: {e}")
-    
-    # Set Python path to include temp directory
-    sys.path.insert(0, temp_dir)
-    
-    return temp_dir
-
-# Apply the fix BEFORE any other imports
-temp_directory = fix_streamlit_permissions()
-
-# Now import everything else
-import asyncio
-import nest_asyncio
-
-# Fix asyncio event loop issues
-nest_asyncio.apply()
-
-# Safe asyncio setup
-def setup_event_loop():
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    return loop
-
-setup_event_loop()
-
-# Import Streamlit with error handling
-try:
-    import streamlit as st
-    # Set page config immediately to prevent further config issues
-    st.set_page_config(
-        page_title="Document Chatbot",
-        page_icon="🤖",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
-except Exception as e:
-    print(f"Error importing Streamlit: {e}")
-    sys.exit(1)
-
-# Import other required libraries
-import torch
+import streamlit as st
 import pandas as pd
 import numpy as np
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
 import warnings
+import tempfile
+import os
 
-# Suppress warnings
+# Suppress warnings first
 warnings.filterwarnings("ignore")
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
-# Simple implementations to replace complex dependencies
+# Set page config
+st.set_page_config(
+    page_title="Document Chatbot",
+    page_icon="🤖",
+    layout="wide"
+)
+
+# Import ML libraries after Streamlit setup
+try:
+    import torch
+    from sentence_transformers import SentenceTransformer
+    from sklearn.metrics.pairwise import cosine_similarity
+    from transformers import pipeline
+except ImportError as e:
+    st.error(f"Import error: {e}")
+    st.stop()
+
 class SimpleTextSplitter:
     def __init__(self, chunk_size=512, chunk_overlap=50):
         self.chunk_size = chunk_size
@@ -180,7 +64,7 @@ class SimpleVectorStore:
                     embedding = self.embedding_model.encode([text])
                     self.embeddings.append(embedding[0])
                 except Exception as e:
-                    print(f"Error encoding text: {e}")
+                    st.error(f"Error encoding text: {e}")
                     continue
     
     def similarity_search(self, query, k=3):
@@ -193,45 +77,30 @@ class SimpleVectorStore:
             top_indices = np.argsort(similarities)[-k:][::-1]
             return [self.texts[i] for i in top_indices if similarities[i] > 0.1]
         except Exception as e:
-            print(f"Error in similarity search: {e}")
+            st.error(f"Error in similarity search: {e}")
             return []
 
-# Load models with caching and error handling
 @st.cache_resource
-def load_embedding_model():
+def load_models():
+    """Load models with better error handling"""
     try:
-        return SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+        # Load embedding model
+        embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+        
+        # Use a simpler, more reliable QA pipeline
+        qa_pipeline = pipeline(
+            "question-answering",
+            model="distilbert-base-cased-distilled-squad",
+            tokenizer="distilbert-base-cased-distilled-squad"
+        )
+        
+        return embedding_model, qa_pipeline
     except Exception as e:
-        st.error(f"Error loading embedding model: {e}")
-        return None
-
-@st.cache_resource
-def load_llm_components():
-    try:
-        from transformers import AutoTokenizer, AutoModelForCausalLM
-        model_name = "microsoft/DialoGPT-small"  # Even smaller model
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = AutoModelForCausalLM.from_pretrained(model_name)
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-        return tokenizer, model
-    except Exception as e:
-        st.error(f"Error loading language model: {e}")
+        st.error(f"Error loading models: {e}")
         return None, None
 
-# Initialize models
-embedding_model = load_embedding_model()
-tokenizer, language_model = load_llm_components()
-
-# Initialize vector store
-if embedding_model:
-    vector_store = SimpleVectorStore(embedding_model)
-else:
-    vector_store = None
-
-# File processing functions
 def extract_text_from_file(file):
-    """Extract text from a single uploaded file"""
+    """Extract text from uploaded file"""
     text = ""
     try:
         if file.type == "text/plain":
@@ -244,8 +113,8 @@ def extract_text_from_file(file):
                     if page_text:
                         text += page_text + "\n"
         elif file.type in ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
-            import docx
-            doc = docx.Document(file)
+            from docx import Document
+            doc = Document(file)
             text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
         elif file.type in ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"]:
             df = pd.read_excel(file)
@@ -255,10 +124,10 @@ def extract_text_from_file(file):
     
     return text.strip()
 
-def process_documents(uploaded_files):
-    """Process all uploaded documents"""
-    if not uploaded_files or not vector_store:
-        return False
+def process_documents(uploaded_files, embedding_model):
+    """Process documents and create vector store"""
+    if not uploaded_files or not embedding_model:
+        return None
     
     all_texts = []
     for file in uploaded_files:
@@ -267,6 +136,9 @@ def process_documents(uploaded_files):
             all_texts.append(text)
     
     if all_texts:
+        # Create vector store
+        vector_store = SimpleVectorStore(embedding_model)
+        
         # Split into chunks
         splitter = SimpleTextSplitter(chunk_size=512, chunk_overlap=50)
         all_chunks = []
@@ -276,53 +148,45 @@ def process_documents(uploaded_files):
         
         # Add to vector store
         vector_store.add_texts(all_chunks)
-        return True
+        return vector_store
     
-    return False
+    return None
 
-def generate_response(query, context=""):
-    """Generate response using the language model"""
-    if not tokenizer or not language_model:
-        return "I'm sorry, but the language model is not available right now."
+def generate_answer(question, context, qa_pipeline):
+    """Generate answer using QA pipeline"""
+    if not qa_pipeline or not context:
+        return "I couldn't find relevant information to answer your question."
     
     try:
-        if context:
-            prompt = f"Context: {context[:500]}\nQuestion: {query}\nAnswer:"
+        # Limit context length to avoid token limits
+        max_context_length = 2000
+        if len(context) > max_context_length:
+            context = context[:max_context_length]
+        
+        result = qa_pipeline(question=question, context=context)
+        
+        if result['score'] > 0.1:  # Confidence threshold
+            return result['answer']
         else:
-            prompt = f"Question: {query}\nAnswer:"
-        
-        inputs = tokenizer.encode(prompt, return_tensors="pt", max_length=300, truncation=True)
-        
-        with torch.no_grad():
-            outputs = language_model.generate(
-                inputs,
-                max_length=inputs.shape[1] + 100,
-                num_return_sequences=1,
-                temperature=0.7,
-                do_sample=True,
-                pad_token_id=tokenizer.eos_token_id,
-                no_repeat_ngram_size=2
-            )
-        
-        response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        
-        # Extract only the answer part
-        if "Answer:" in response:
-            answer = response.split("Answer:")[-1].strip()
-            # Clean up the response
-            sentences = answer.split('.')
-            clean_answer = '. '.join(sentences[:2])  # Take first 2 sentences
-            return clean_answer if clean_answer else "I couldn't generate a proper response."
-        
-        return "I couldn't generate a proper response."
-        
+            return "I couldn't find a confident answer to your question in the provided documents."
+    
     except Exception as e:
-        return f"Sorry, I encountered an error: {str(e)[:100]}"
+        return f"Error generating answer: {str(e)[:100]}"
 
-# Streamlit UI
 def main():
     st.title("🤖 Document Question Answering Chatbot")
     st.markdown("Upload documents and ask questions about their content!")
+    
+    # Load models
+    embedding_model, qa_pipeline = load_models()
+    
+    if not embedding_model or not qa_pipeline:
+        st.error("Failed to load required models. Please refresh the page.")
+        return
+    
+    # Initialize session state
+    if 'vector_store' not in st.session_state:
+        st.session_state.vector_store = None
     
     # Sidebar for file upload
     with st.sidebar:
@@ -339,7 +203,9 @@ def main():
             
             if st.button("🔄 Process Documents"):
                 with st.spinner("Processing documents..."):
-                    if process_documents(uploaded_files):
+                    vector_store = process_documents(uploaded_files, embedding_model)
+                    if vector_store:
+                        st.session_state.vector_store = vector_store
                         st.success("✅ Documents processed successfully!")
                     else:
                         st.error("❌ Error processing documents")
@@ -347,39 +213,38 @@ def main():
     # Main chat interface
     st.header("💬 Ask Questions")
     
-    # Chat input
     user_question = st.text_input(
         "Enter your question:",
         placeholder="What would you like to know about your documents?"
     )
     
-    if user_question:
-        with st.spinner("Thinking..."):
+    if user_question and st.session_state.vector_store:
+        with st.spinner("Finding answer..."):
             # Get relevant context
-            context = ""
-            if vector_store and vector_store.texts:
-                relevant_chunks = vector_store.similarity_search(user_question, k=3)
-                context = " ".join(relevant_chunks)
+            relevant_chunks = st.session_state.vector_store.similarity_search(user_question, k=3)
+            context = " ".join(relevant_chunks)
             
-            # Generate response
-            response = generate_response(user_question, context)
-            
-            # Display response
-            st.markdown("### 🤖 Response:")
-            st.markdown(response)
-            
-            # Show context if available
-            if context and st.checkbox("Show source context"):
-                st.markdown("### 📝 Source Context:")
-                st.text_area("Relevant text from documents:", context, height=150)
+            if context:
+                # Generate answer
+                answer = generate_answer(user_question, context, qa_pipeline)
+                
+                # Display response
+                st.markdown("### 🤖 Response:")
+                st.markdown(answer)
+                
+                # Show context if requested
+                if st.checkbox("Show source context"):
+                    st.markdown("### 📝 Source Context:")
+                    st.text_area("Relevant text from documents:", context, height=150)
+            else:
+                st.warning("No relevant information found in the uploaded documents.")
+    
+    elif user_question and not st.session_state.vector_store:
+        st.warning("Please upload and process documents first!")
     
     # Instructions
     if not uploaded_files:
         st.info("👆 Please upload some documents using the sidebar to get started!")
-    
-    # Footer
-    st.markdown("---")
-    st.markdown("*Upload your documents and start asking questions!*")
 
 if __name__ == "__main__":
     main()
