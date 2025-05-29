@@ -1,106 +1,79 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import torch
 import warnings
-import tempfile
-import os
+from transformers import AutoTokenizer, AutoModel, pipeline
+from sklearn.metrics.pairwise import cosine_similarity
 
-# Suppress warnings first
 warnings.filterwarnings("ignore")
-os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+st.set_page_config(page_title="🧠 Transformers QA Bot", layout="wide")
 
-# Set page config
-st.set_page_config(
-    page_title="Document Chatbot",
-    page_icon="🤖",
-    layout="wide"
-)
-
-# Import ML libraries after Streamlit setup
-try:
-    import torch
-    from sentence_transformers import SentenceTransformer
-    from sklearn.metrics.pairwise import cosine_similarity
-    from transformers import pipeline
-except ImportError as e:
-    st.error(f"Import error: {e}")
-    st.stop()
-
-class SimpleTextSplitter:
-    def __init__(self, chunk_size=512, chunk_overlap=50):
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
-    
-    def split_text(self, text):
-        if not text:
-            return []
-        
-        chunks = []
-        start = 0
-        text_length = len(text)
-        
-        while start < text_length:
-            end = min(start + self.chunk_size, text_length)
-            chunk = text[start:end].strip()
-            if chunk:
-                chunks.append(chunk)
-            start = end - self.chunk_overlap
-            if start >= text_length:
-                break
-        
-        return chunks
-
-class SimpleVectorStore:
-    def __init__(self, embedding_model):
-        self.embedding_model = embedding_model
-        self.texts = []
-        self.embeddings = []
-    
-    def add_texts(self, texts):
-        for text in texts:
-            if text and text.strip():
-                self.texts.append(text)
-                try:
-                    embedding = self.embedding_model.encode([text])
-                    self.embeddings.append(embedding[0])
-                except Exception as e:
-                    st.error(f"Error encoding text: {e}")
-                    continue
-    
-    def similarity_search(self, query, k=3):
-        if not self.texts or not self.embeddings:
-            return []
-        
-        try:
-            query_embedding = self.embedding_model.encode([query])
-            similarities = cosine_similarity(query_embedding, self.embeddings)[0]
-            top_indices = np.argsort(similarities)[-k:][::-1]
-            return [self.texts[i] for i in top_indices if similarities[i] > 0.1]
-        except Exception as e:
-            st.error(f"Error in similarity search: {e}")
-            return []
+# ----------------- Embedding + QA -----------------
+@st.cache_resource
+def load_embedder():
+    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+    model = AutoModel.from_pretrained("bert-base-uncased")
+    return tokenizer, model
 
 @st.cache_resource
-def load_models():
-    """Load models with better error handling"""
-    try:
-        # Load embedding model
-        embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-        
-        # Use a simpler, more reliable QA pipeline
-        qa_pipeline = pipeline(
-            "question-answering",
-            model="distilbert-base-cased-distilled-squad",
-            tokenizer="distilbert-base-cased-distilled-squad"
-        )
-        
-        return embedding_model, qa_pipeline
-    except Exception as e:
-        st.error(f"Error loading models: {e}")
-        return None, None
+def load_qa_model():
+    return pipeline("question-answering", model="distilbert-base-uncased-distilled-squad")
+
+class Embedder:
+    def __init__(self, tokenizer, model):
+        self.tokenizer = tokenizer
+        self.model = model
+        self.model.eval()
+
+    def encode(self, texts):
+        with torch.no_grad():
+            inputs = self.tokenizer(texts, padding=True, truncation=True, return_tensors="pt")
+            outputs = self.model(**inputs)
+            return self.mean_pooling(outputs, inputs['attention_mask']).cpu().numpy()
+
+    def mean_pooling(self, model_output, attention_mask):
+        token_embeddings = model_output.last_hidden_state
+        mask = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+        return torch.sum(token_embeddings * mask, 1) / torch.clamp(mask.sum(1), min=1e-9)
+
+# ----------------- Utilities -----------------
+class SimpleVectorStore:
+    def __init__(self, embedder):
+        self.embedder = embedder
+        self.texts = []
+        self.embeddings = []
+
+    def add_texts(self, texts):
+        for text in texts:
+            if text.strip():
+                emb = self.embedder.encode([text])[0]
+                self.texts.append(text)
+                self.embeddings.append(emb)
+
+    def similarity_search(self, query, k=3):
+        if not self.embeddings:
+            return []
+        query_embedding = self.embedder.encode([query])[0]
+        sims = cosine_similarity([query_embedding], self.embeddings)[0]
+        top_k = np.argsort(sims)[-k:][::-1]
+        return [self.texts[i] for i in top_k if sims[i] > 0.2]
+
+class SimpleTextSplitter:
+    def __init__(self, chunk_size=500, chunk_overlap=50):
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+
+    def split_text(self, text):
+        chunks = []
+        start = 0
+        while start < len(text):
+            end = min(start + self.chunk_size, len(text))
+            chunks.append(text[start:end].strip())
+            start = max(start + self.chunk_size - self.chunk_overlap, end)
+        return chunks
 
 def extract_text_from_file(file):
-    """Extract text from uploaded file"""
     text = ""
     try:
         if file.type == "text/plain":
@@ -108,143 +81,61 @@ def extract_text_from_file(file):
         elif file.type == "application/pdf":
             import pdfplumber
             with pdfplumber.open(file) as pdf:
-                for page in pdf.pages:
-                    page_text = page.extract_text()
-                    if page_text:
-                        text += page_text + "\n"
-        elif file.type in ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
+                text = "\n".join(p.extract_text() or '' for p in pdf.pages)
+        elif file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
             from docx import Document
             doc = Document(file)
-            text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
+            text = "\n".join(p.text for p in doc.paragraphs)
         elif file.type in ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"]:
             df = pd.read_excel(file)
             text = df.to_string()
     except Exception as e:
-        st.error(f"Error processing file {file.name}: {e}")
-    
+        st.error(f"File error [{file.name}]: {e}")
     return text.strip()
 
-def process_documents(uploaded_files, embedding_model):
-    """Process documents and create vector store"""
-    if not uploaded_files or not embedding_model:
-        return None
-    
-    all_texts = []
-    for file in uploaded_files:
-        text = extract_text_from_file(file)
-        if text:
-            all_texts.append(text)
-    
-    if all_texts:
-        # Create vector store
-        vector_store = SimpleVectorStore(embedding_model)
-        
-        # Split into chunks
-        splitter = SimpleTextSplitter(chunk_size=512, chunk_overlap=50)
-        all_chunks = []
-        for text in all_texts:
-            chunks = splitter.split_text(text)
-            all_chunks.extend(chunks)
-        
-        # Add to vector store
-        vector_store.add_texts(all_chunks)
-        return vector_store
-    
-    return None
-
-def generate_answer(question, context, qa_pipeline):
-    """Generate answer using QA pipeline"""
-    if not qa_pipeline or not context:
-        return "I couldn't find relevant information to answer your question."
-    
-    try:
-        # Limit context length to avoid token limits
-        max_context_length = 2000
-        if len(context) > max_context_length:
-            context = context[:max_context_length]
-        
-        result = qa_pipeline(question=question, context=context)
-        
-        if result['score'] > 0.1:  # Confidence threshold
-            return result['answer']
-        else:
-            return "I couldn't find a confident answer to your question in the provided documents."
-    
-    except Exception as e:
-        return f"Error generating answer: {str(e)[:100]}"
-
+# ----------------- Main App -----------------
 def main():
-    st.title("🤖 Document Question Answering Chatbot")
-    st.markdown("Upload documents and ask questions about their content!")
-    
-    # Load models
-    embedding_model, qa_pipeline = load_models()
-    
-    if not embedding_model or not qa_pipeline:
-        st.error("Failed to load required models. Please refresh the page.")
-        return
-    
-    # Initialize session state
-    if 'vector_store' not in st.session_state:
+    st.title("🤖 Chat with Documents (QA Model)")
+    st.markdown("Upload documents and ask questions with extractive QA powered by Transformers.")
+
+    if "vector_store" not in st.session_state:
         st.session_state.vector_store = None
-    
-    # Sidebar for file upload
+
+    tokenizer, embed_model = load_embedder()
+    qa_pipeline = load_qa_model()
+
     with st.sidebar:
         st.header("📁 Upload Documents")
-        uploaded_files = st.file_uploader(
-            "Choose files",
-            accept_multiple_files=True,
-            type=['txt', 'pdf', 'docx', 'xlsx', 'xls'],
-            help="Upload PDF, Word, Excel, or text files"
-        )
-        
-        if uploaded_files:
-            st.success(f"📄 {len(uploaded_files)} file(s) uploaded")
-            
-            if st.button("🔄 Process Documents"):
-                with st.spinner("Processing documents..."):
-                    vector_store = process_documents(uploaded_files, embedding_model)
-                    if vector_store:
-                        st.session_state.vector_store = vector_store
-                        st.success("✅ Documents processed successfully!")
-                    else:
-                        st.error("❌ Error processing documents")
-    
-    # Main chat interface
-    st.header("💬 Ask Questions")
-    
-    user_question = st.text_input(
-        "Enter your question:",
-        placeholder="What would you like to know about your documents?"
-    )
-    
-    if user_question and st.session_state.vector_store:
-        with st.spinner("Finding answer..."):
-            # Get relevant context
-            relevant_chunks = st.session_state.vector_store.similarity_search(user_question, k=3)
-            context = " ".join(relevant_chunks)
-            
-            if context:
-                # Generate answer
-                answer = generate_answer(user_question, context, qa_pipeline)
-                
-                # Display response
-                st.markdown("### 🤖 Response:")
-                st.markdown(answer)
-                
-                # Show context if requested
-                if st.checkbox("Show source context"):
-                    st.markdown("### 📝 Source Context:")
-                    st.text_area("Relevant text from documents:", context, height=150)
-            else:
-                st.warning("No relevant information found in the uploaded documents.")
-    
-    elif user_question and not st.session_state.vector_store:
-        st.warning("Please upload and process documents first!")
-    
-    # Instructions
-    if not uploaded_files:
-        st.info("👆 Please upload some documents using the sidebar to get started!")
+        files = st.file_uploader("Choose files", type=["txt", "pdf", "docx", "xlsx", "xls"], accept_multiple_files=True)
+
+        if st.button("🔄 Process"):
+            if files:
+                embedder = Embedder(tokenizer, embed_model)
+                splitter = SimpleTextSplitter()
+                all_chunks = []
+                for file in files:
+                    text = extract_text_from_file(file)
+                    all_chunks.extend(splitter.split_text(text))
+
+                store = SimpleVectorStore(embedder)
+                store.add_texts(all_chunks)
+                st.session_state.vector_store = store
+                st.success(f"{len(all_chunks)} chunks processed!")
+
+    if st.session_state.vector_store:
+        user_question = st.text_input("💬 Ask a question:")
+        if user_question:
+            with st.spinner("Searching context..."):
+                chunks = st.session_state.vector_store.similarity_search(user_question, k=3)
+                context = " ".join(chunks)
+
+                if context:
+                    result = qa_pipeline(question=user_question, context=context)
+                    st.markdown(f"### 🤖 Answer:\n**{result['answer']}**")
+                    if st.checkbox("Show context"):
+                        st.text_area("Retrieved Context", context, height=200)
+                else:
+                    st.warning("No relevant context found.")
 
 if __name__ == "__main__":
     main()

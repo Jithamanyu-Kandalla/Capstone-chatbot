@@ -1,9 +1,7 @@
 streamlit
-torch
 transformers
-sentence-transformers
+torch
 scikit-learn
-numpy
 pandas
 pdfplumber
 python-docx
