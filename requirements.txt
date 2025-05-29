@@ -1,7 +1,7 @@
 streamlit
-transformers==4.38.2
-tokenizers==0.19.1
-torch==2.2.2
+transformers==4.37.2
+tokenizers==0.18.1
+torch==2.1.2
 scikit-learn
 pandas
 pdfplumber
