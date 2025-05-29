@@ -3,6 +3,9 @@ import os
 os.environ["TORCH_HOME"] = "/tmp/torch"
 os.environ["STREAMLIT_WATCHER_TYPE"] = "none"
 
+import platform
+st.sidebar.markdown(f"🧪 Python version: `{platform.python_version()}`")
+
 import streamlit as st
 import pandas as pd
 import numpy as np
