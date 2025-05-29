@@ -1,9 +1,9 @@
-streamlit
 transformers==4.37.2
 tokenizers==0.18.1
-torch==2.1.2
 scikit-learn
 pandas
 pdfplumber
 python-docx
 openpyxl
+streamlit==1.45.1
+torch>=2.0.0,<2.8.0
