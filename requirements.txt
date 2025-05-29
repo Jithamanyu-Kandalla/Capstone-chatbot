@@ -1,5 +1,5 @@
 transformers==4.37.2
-tokenizers==0.18.1
+tokenizers
 scikit-learn
 pandas
 pdfplumber
