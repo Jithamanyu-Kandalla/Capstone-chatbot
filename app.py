@@ -2,12 +2,9 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import warnings
-import tempfile
-import os
 
-# Suppress warnings first
+# Suppress warnings
 warnings.filterwarnings("ignore")
-os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
 # Set page config
 st.set_page_config(
@@ -16,12 +13,10 @@ st.set_page_config(
     layout="wide"
 )
 
-# Import ML libraries after Streamlit setup
+# Import ML libraries
 try:
-    import torch
     from sentence_transformers import SentenceTransformer
     from sklearn.metrics.pairwise import cosine_similarity
-    from transformers import pipeline
 except ImportError as e:
     st.error(f"Import error: {e}")
     st.stop()
@@ -44,7 +39,7 @@ class SimpleTextSplitter:
             chunk = text[start:end].strip()
             if chunk:
                 chunks.append(chunk)
-            start = end - self.chunk_overlap
+            start = max(start + self.chunk_size - self.chunk_overlap, end)
             if start >= text_length:
                 break
         
@@ -75,29 +70,19 @@ class SimpleVectorStore:
             query_embedding = self.embedding_model.encode([query])
             similarities = cosine_similarity(query_embedding, self.embeddings)[0]
             top_indices = np.argsort(similarities)[-k:][::-1]
-            return [self.texts[i] for i in top_indices if similarities[i] > 0.1]
+            return [self.texts[i] for i in top_indices if similarities[i] > 0.2]
         except Exception as e:
             st.error(f"Error in similarity search: {e}")
             return []
 
 @st.cache_resource
-def load_models():
-    """Load models with better error handling"""
+def load_embedding_model():
+    """Load embedding model"""
     try:
-        # Load embedding model
-        embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-        
-        # Use a simpler, more reliable QA pipeline
-        qa_pipeline = pipeline(
-            "question-answering",
-            model="distilbert-base-cased-distilled-squad",
-            tokenizer="distilbert-base-cased-distilled-squad"
-        )
-        
-        return embedding_model, qa_pipeline
+        return SentenceTransformer("all-MiniLM-L6-v2")
     except Exception as e:
-        st.error(f"Error loading models: {e}")
-        return None, None
+        st.error(f"Error loading embedding model: {e}")
+        return None
 
 def extract_text_from_file(file):
     """Extract text from uploaded file"""
@@ -140,7 +125,7 @@ def process_documents(uploaded_files, embedding_model):
         vector_store = SimpleVectorStore(embedding_model)
         
         # Split into chunks
-        splitter = SimpleTextSplitter(chunk_size=512, chunk_overlap=50)
+        splitter = SimpleTextSplitter(chunk_size=500, chunk_overlap=50)
         all_chunks = []
         for text in all_texts:
             chunks = splitter.split_text(text)
@@ -152,23 +137,37 @@ def process_documents(uploaded_files, embedding_model):
     
     return None
 
-def generate_answer(question, context, qa_pipeline):
-    """Generate answer using QA pipeline"""
-    if not qa_pipeline or not context:
+def generate_simple_answer(question, context):
+    """Generate a simple answer by finding the most relevant sentence"""
+    if not context:
         return "I couldn't find relevant information to answer your question."
     
     try:
-        # Limit context length to avoid token limits
-        max_context_length = 2000
-        if len(context) > max_context_length:
-            context = context[:max_context_length]
+        # Split context into sentences
+        sentences = [s.strip() for s in context.split('.') if len(s.strip()) > 20]
         
-        result = qa_pipeline(question=question, context=context)
+        if not sentences:
+            return "I found some information but couldn't extract a clear answer."
         
-        if result['score'] > 0.1:  # Confidence threshold
-            return result['answer']
+        # Simple keyword matching approach
+        question_words = set(question.lower().split())
+        
+        best_sentence = ""
+        best_score = 0
+        
+        for sentence in sentences:
+            sentence_words = set(sentence.lower().split())
+            # Calculate simple word overlap score
+            overlap = len(question_words.intersection(sentence_words))
+            if overlap > best_score:
+                best_score = overlap
+                best_sentence = sentence
+        
+        if best_sentence and best_score > 0:
+            return best_sentence.strip() + "."
         else:
-            return "I couldn't find a confident answer to your question in the provided documents."
+            # Return first relevant sentence if no good match
+            return sentences[0].strip() + "."
     
     except Exception as e:
         return f"Error generating answer: {str(e)[:100]}"
@@ -177,11 +176,11 @@ def main():
     st.title("🤖 Document Question Answering Chatbot")
     st.markdown("Upload documents and ask questions about their content!")
     
-    # Load models
-    embedding_model, qa_pipeline = load_models()
+    # Load embedding model
+    embedding_model = load_embedding_model()
     
-    if not embedding_model or not qa_pipeline:
-        st.error("Failed to load required models. Please refresh the page.")
+    if not embedding_model:
+        st.error("Failed to load embedding model. Please refresh the page.")
         return
     
     # Initialize session state
@@ -204,9 +203,9 @@ def main():
             if st.button("🔄 Process Documents"):
                 with st.spinner("Processing documents..."):
                     vector_store = process_documents(uploaded_files, embedding_model)
-                    if vector_store:
+                    if vector_store and vector_store.texts:
                         st.session_state.vector_store = vector_store
-                        st.success("✅ Documents processed successfully!")
+                        st.success(f"✅ Documents processed! {len(vector_store.texts)} chunks created.")
                     else:
                         st.error("❌ Error processing documents")
     
@@ -222,11 +221,12 @@ def main():
         with st.spinner("Finding answer..."):
             # Get relevant context
             relevant_chunks = st.session_state.vector_store.similarity_search(user_question, k=3)
-            context = " ".join(relevant_chunks)
             
-            if context:
+            if relevant_chunks:
+                context = " ".join(relevant_chunks)
+                
                 # Generate answer
-                answer = generate_answer(user_question, context, qa_pipeline)
+                answer = generate_simple_answer(user_question, context)
                 
                 # Display response
                 st.markdown("### 🤖 Response:")
@@ -243,8 +243,13 @@ def main():
         st.warning("Please upload and process documents first!")
     
     # Instructions
-    if not uploaded_files:
+    if not st.session_state.vector_store:
         st.info("👆 Please upload some documents using the sidebar to get started!")
+    
+    # Show debug info
+    if st.session_state.vector_store:
+        st.sidebar.markdown("---")
+        st.sidebar.markdown(f"**Processed chunks:** {len(st.session_state.vector_store.texts)}")
 
 if __name__ == "__main__":
     main()
