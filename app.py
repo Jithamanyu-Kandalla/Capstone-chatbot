@@ -1,9 +1,9 @@
 import streamlit as st
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import FAISS
-from langchain.llms import OpenAI
-from langchain.chains import RetrievalQA
-from langchain.document_loaders import (
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_community.llms import OpenAI
+from langchain_community.chains import RetrievalQA
+from langchain_community.document_loaders import (
     PyMuPDFLoader, UnstructuredWordDocumentLoader,
     UnstructuredExcelLoader, TextLoader, UnstructuredImageLoader,
     UnstructuredVideoLoader
