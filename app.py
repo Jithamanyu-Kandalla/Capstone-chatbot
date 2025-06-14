@@ -8,7 +8,7 @@ import os
 from openai import OpenAI
 
 # --- CONFIG ---
-client = OpenAI()  # Automatically uses OPENAI_API_KEY from env
+client = OpenAI(api_key=os.getenv("openai_api_key"))
 
 # --- FILE HANDLING ---
 def extract_text_from_pdf(file):
