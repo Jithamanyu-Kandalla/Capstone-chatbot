@@ -5,9 +5,10 @@ from PIL import Image
 import docx
 import pandas as pd
 import openai
+import os
 
 # --- CONFIG ---
-openai.api_key = st.secrets["Secret"]
+openai.api_key = os.getenv("Secret")
 
 # --- FILE HANDLING ---
 def extract_text_from_pdf(file):
