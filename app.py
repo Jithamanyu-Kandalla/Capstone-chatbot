@@ -4,11 +4,11 @@ import pytesseract
 from PIL import Image
 import docx
 import pandas as pd
-import openai
 import os
+from openai import OpenAI
 
 # --- CONFIG ---
-openai.api_key = os.getenv("Secret")
+client = OpenAI()  # Automatically uses OPENAI_API_KEY from env
 
 # --- FILE HANDLING ---
 def extract_text_from_pdf(file):
@@ -50,7 +50,7 @@ def get_text_from_file(uploaded_file):
 # --- LLM Functions ---
 def get_summary(text):
     prompt = f"Summarize the following text:\n{text[:3000]}"
-    response = openai.ChatCompletion.create(
+    response = client.chat.completions.create(
         model="gpt-4",
         messages=[{"role": "user", "content": prompt}]
     )
@@ -58,7 +58,7 @@ def get_summary(text):
 
 def answer_question(text, question):
     prompt = f"Answer the following question based on the text:\n\nText:\n{text[:3000]}\n\nQuestion: {question}"
-    response = openai.ChatCompletion.create(
+    response = client.chat.completions.create(
         model="gpt-4",
         messages=[{"role": "user", "content": prompt}]
     )
