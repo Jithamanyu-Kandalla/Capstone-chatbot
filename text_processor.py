@@ -1,6 +1,6 @@
 import openai
 
-openai.api_key = "YOUR_OPENAI_API_KEY"
+openai.api_key = "Secret"
 
 def get_summary(text):
     prompt = f"Summarize the following text:\n{text[:3000]}"
