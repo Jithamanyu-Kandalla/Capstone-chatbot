@@ -66,25 +66,69 @@ def answer_question(text, question):
 
 # --- Streamlit App ---
 st.set_page_config(page_title="Document Insight Chatbot", layout="wide")
-st.title("📄 Document Insight Chatbot")
+st.title("?? Document Insight Chatbot")
 
-uploaded_file = st.file_uploader("Upload a document", type=["pdf", "docx", "xlsx", "txt", "jpg", "png"])
+# --- Session State for Chat History and Processing ---
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+if "processing" not in st.session_state:
+    st.session_state.processing = False
+
+uploaded_file = st.file_uploader(
+    "Upload a document (max 5MB)",
+    type=["pdf", "docx", "xlsx", "txt", "jpg", "png"]
+)
+
+# --- File Size Limit (5MB for free tier) ---
+if uploaded_file and uploaded_file.size > 5 * 1024 * 1024:
+    st.error("File too large. Please upload a file smaller than 5MB.")
+    uploaded_file = None
 
 if uploaded_file:
-    text = get_text_from_file(uploaded_file)
+    try:
+        text = get_text_from_file(uploaded_file)
+    except Exception as e:
+        st.error(f"Error reading file: {e}")
+        text = ""
 
     if text.strip() == "":
         st.warning("No readable text found in the document.")
     else:
-        st.subheader("📌 Summary")
-        if st.button("Generate Summary"):
+        st.subheader("?? Summary")
+        if st.button("Generate Summary", disabled=st.session_state.processing):
+            st.session_state.processing = True
             with st.spinner("Summarizing..."):
-                summary = get_summary(text)
-                st.success(summary)
+                try:
+                    summary = get_summary(text)
+                    st.success(summary)
+                except Exception as e:
+                    st.error(f"Error: {e}")
+            st.session_state.processing = False
 
-        st.subheader("💬 Ask a Question")
+        st.subheader("?? Ask a Question")
         question = st.text_input("What would you like to know?")
-        if st.button("Get Answer"):
-            with st.spinner("Finding answer..."):
-                answer = answer_question(text, question)
-                st.success(answer)
+        if st.button("Get Answer", disabled=st.session_state.processing):
+            if question.strip():
+                st.session_state.processing = True
+                with st.spinner("Finding answer..."):
+                    try:
+                        answer = answer_question(text, question)
+                        st.session_state.chat_history.append(
+                            {"question": question, "answer": answer}
+                        )
+                        st.success(answer)
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+                st.session_state.processing = False
+            else:
+                st.warning("Please enter a question.")
+
+        # Display chat history
+        if st.session_state.chat_history:
+            st.subheader("?? Chat History")
+            for chat in st.session_state.chat_history:
+                st.markdown(f"**Q:** {chat['question']}")
+                st.markdown(f"**A:** {chat['answer']}")
+
+        if st.button("Clear Chat History"):
+            st.session_state.chat_history = []

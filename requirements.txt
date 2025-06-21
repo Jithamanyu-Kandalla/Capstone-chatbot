@@ -1,15 +1,13 @@
 streamlit
 
-openai>=1.0.0
+pdfplumber
 
 pytesseract
 
-pandas
-
-pdfplumber
+pillow
 
 python-docx
 
-openpyxl
+pandas
 
-Pillow
+openai
