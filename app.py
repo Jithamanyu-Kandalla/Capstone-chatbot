@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pdfplumber
 import pytesseract
@@ -8,7 +9,7 @@ import os
 from openai import OpenAI
 
 # --- CONFIG ---
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 # --- FILE HANDLING ---
 def extract_text_from_pdf(file):
@@ -66,7 +67,7 @@ def answer_question(text, question):
 
 # --- Streamlit App ---
 st.set_page_config(page_title="Document Insight Chatbot", layout="wide")
-st.title("?? Document Insight Chatbot")
+st.title("📄 Document Insight Chatbot")
 
 # --- Session State for Chat History and Processing ---
 if "chat_history" not in st.session_state:
@@ -94,7 +95,7 @@ if uploaded_file:
     if text.strip() == "":
         st.warning("No readable text found in the document.")
     else:
-        st.subheader("?? Summary")
+        st.subheader("📌 Summary")
         if st.button("Generate Summary", disabled=st.session_state.processing):
             st.session_state.processing = True
             with st.spinner("Summarizing..."):
@@ -105,7 +106,7 @@ if uploaded_file:
                     st.error(f"Error: {e}")
             st.session_state.processing = False
 
-        st.subheader("?? Ask a Question")
+        st.subheader("❓ Ask a Question")
         question = st.text_input("What would you like to know?")
         if st.button("Get Answer", disabled=st.session_state.processing):
             if question.strip():
@@ -125,7 +126,7 @@ if uploaded_file:
 
         # Display chat history
         if st.session_state.chat_history:
-            st.subheader("?? Chat History")
+            st.subheader("💬 Chat History")
             for chat in st.session_state.chat_history:
                 st.markdown(f"**Q:** {chat['question']}")
                 st.markdown(f"**A:** {chat['answer']}")
